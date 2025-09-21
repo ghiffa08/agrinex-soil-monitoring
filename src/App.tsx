@@ -299,7 +299,7 @@ export default function App() {
     
     useEffect(() => {
         const sensorReadingsRef = ref(database, 'sensor_readings');
-        const unsubscribe = onValue(sensorReadingsRef, (snapshot) => {
+       const unsubscribe = onValue(sensorReadingsRef, (snapshot) => {
             try {
                 const data = snapshot.val();
                 if (data) {
@@ -321,7 +321,7 @@ export default function App() {
                 setError("Failed to process data from Firebase.");
                 setIsFirebaseLoading(false);
             }
-        }, (err) => {
+        }, () => {
             setError("Cannot connect to Firebase. Check configuration.");
             setIsFirebaseLoading(false);
         });
