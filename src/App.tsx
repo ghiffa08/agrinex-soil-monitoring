@@ -289,12 +289,141 @@ const SensorCard: React.FC<SensorCardProps> = ({ sensorData, onSelect }) => {
     );
 };
 
+// --- Komponen Overview Chart ---
+interface OverviewChartProps {
+  sensorsData: Record<string, SensorData>;
+  timeRange: 'hourly' | 'daily';
+}
+
+const OverviewChart: React.FC<OverviewChartProps> = ({ sensorsData, timeRange }) => {
+  const chartRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!chartRef.current || typeof (window as any).ApexCharts === 'undefined') return;
+
+    // Proses data berdasarkan time range
+    const processDataByTimeRange = () => {
+      const now = new Date();
+      const timeLimit = timeRange === 'hourly' 
+        ? new Date(now.getTime() - 24 * 60 * 60 * 1000) // 24 jam terakhir
+        : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 hari terakhir
+
+      const groupedData: Record<string, Record<string, number[]>> = {};
+      const allTimePoints = new Set<string>();
+
+      Object.entries(sensorsData).forEach(([sensorId, sensorData]) => {
+        groupedData[sensorId] = {};
+        
+        sensorData.history.forEach(log => {
+          const logDate = new Date(log.timestamp);
+          if (logDate >= timeLimit) {
+            let timeKey: string;
+            
+            if (timeRange === 'hourly') {
+              // Group by hour
+              timeKey = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}-${String(logDate.getDate()).padStart(2, '0')} ${String(logDate.getHours()).padStart(2, '0')}:00`;
+            } else {
+              // Group by day
+              timeKey = `${logDate.getFullYear()}-${String(logDate.getMonth() + 1).padStart(2, '0')}-${String(logDate.getDate()).padStart(2, '0')}`;
+            }
+            
+            if (!groupedData[sensorId][timeKey]) {
+              groupedData[sensorId][timeKey] = [];
+            }
+            groupedData[sensorId][timeKey].push(log.moisture_percent);
+            allTimePoints.add(timeKey);
+          }
+        });
+      });
+
+      // Sort time points
+      const sortedTimePoints = Array.from(allTimePoints).sort();
+
+      // Create series data
+      const series = Object.entries(groupedData).map(([sensorId, timeData]) => ({
+        name: sensorId.replace('_', ' ').toUpperCase(),
+        data: sortedTimePoints.map(timePoint => {
+          const values = timeData[timePoint] || [];
+          return values.length > 0 
+            ? Math.round(values.reduce((sum, val) => sum + val, 0) / values.length)
+            : null;
+        })
+      }));
+
+      return { series, categories: sortedTimePoints };
+    };
+
+    const { series, categories } = processDataByTimeRange();
+
+    const options = {
+      chart: {
+        type: 'line',
+        height: 400,
+        zoom: { enabled: true },
+        toolbar: { show: true }
+      },
+      series: series,
+      xaxis: {
+        type: 'datetime',
+        categories: categories.map(cat => new Date(cat).getTime()),
+        labels: {
+          datetimeUTC: false,
+          style: { colors: '#6b7280' },
+          format: timeRange === 'hourly' ? 'dd MMM HH:mm' : 'dd MMM yyyy'
+        }
+      },
+      yaxis: {
+        min: 0,
+        max: 100,
+        labels: {
+          formatter: (val: number) => `${val}%`,
+          style: { colors: '#6b7280' }
+        }
+      },
+      colors: ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444'],
+      stroke: { 
+        curve: 'smooth', 
+        width: 3
+      },
+      markers: {
+        size: 4,
+        hover: { size: 6 }
+      },
+      dataLabels: { enabled: false },
+      tooltip: {
+        x: { 
+          format: timeRange === 'hourly' ? 'dd MMM yyyy, HH:mm' : 'dd MMM yyyy'
+        },
+        y: {
+          formatter: (val: number) => val ? `${val}%` : 'No data'
+        }
+      },
+      grid: {
+        borderColor: '#e5e7eb',
+        strokeDashArray: 4
+      },
+      legend: {
+        position: 'top',
+        horizontalAlign: 'center'
+      }
+    };
+
+    const chart = new (window as any).ApexCharts(chartRef.current, options);
+    chart.render();
+
+    return () => chart.destroy();
+  }, [sensorsData, timeRange]);
+
+  return <div ref={chartRef} />;
+};
+
 // --- Komponen Utama Aplikasi Dashboard ---
 export default function App() {
     const [sensorsData, setSensorsData] = useState<Record<string, SensorData>>({});
     const [isFirebaseLoading, setIsFirebaseLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [selectedSensor, setSelectedSensor] = useState<SensorData | null>(null);
+    const [overviewTimeRange, setOverviewTimeRange] = useState<'hourly' | 'daily'>('hourly');
     const { isLoaded: isApexChartsLoaded, error: apexChartsError } = useScript('https://cdn.jsdelivr.net/npm/apexcharts');
     
     useEffect(() => {
@@ -351,16 +480,53 @@ export default function App() {
                     {error && <p className="text-center text-red-600 bg-red-100 p-4 rounded-lg">{error}</p>}
                     {apexChartsError && <p className="text-center text-red-600 bg-red-100 p-4 rounded-lg">Failed to load charting library.</p>}
                     
-                    {!isLoading && !error && (
-                         Object.keys(sensorsData).length > 0 ? (
+                    {!isLoading && !error && Object.keys(sensorsData).length > 0 && (
+                        <>
+                            {/* Overview Chart Section */}
+                            <section className="mb-8">
+                                <div className="bg-white rounded-2xl p-6 shadow-md">
+                                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                                        <h2 className="text-xl font-bold text-gray-800 mb-2 sm:mb-0">
+                                            Overview - All Sensors
+                                        </h2>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setOverviewTimeRange('hourly')}
+                                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                                    overviewTimeRange === 'hourly'
+                                                        ? 'bg-green-500 text-white'
+                                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                }`}
+                                            >
+                                                24 Hours
+                                            </button>
+                                            <button
+                                                onClick={() => setOverviewTimeRange('daily')}
+                                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                                    overviewTimeRange === 'daily'
+                                                        ? 'bg-green-500 text-white'
+                                                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                                }`}
+                                            >
+                                                7 Days
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <OverviewChart sensorsData={sensorsData} timeRange={overviewTimeRange} />
+                                </div>
+                            </section>
+
+                            {/* Individual Sensors Grid */}
                             <main className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                                 {Object.keys(sensorsData).sort().map(sensorId => (
                                     <SensorCard key={sensorId} sensorData={sensorsData[sensorId]} onSelect={setSelectedSensor} />
                                 ))}
                             </main>
-                        ) : (
-                            <p className="text-center text-gray-500 mt-10">Waiting for sensor data...</p>
-                        )
+                        </>
+                    )}
+
+                    {!isLoading && !error && Object.keys(sensorsData).length === 0 && (
+                        <p className="text-center text-gray-500 mt-10">Waiting for sensor data...</p>
                     )}
                 </div>
             </div>
